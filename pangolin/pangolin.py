@@ -399,8 +399,10 @@ def main():
     parser.add_argument("-s", "--score_cutoff", type=float, help="Output all sites with absolute predicted change in score >= cutoff, instead of only the maximum loss/gain sites.")
     parser.add_argument("-d", "--distance", type=int, default=50, help="Number of bases on either side of the variant for which splice scores should be calculated. (Default: 50)")
     parser.add_argument("--score_exons", default="False", choices=["False","True"], help="Output changes in score for both splice sites of annotated exons, as long as one splice site is within the considered range (specified by -d). Output will be: gene|site1_pos:score|site2_pos:score|...")
+    parser.add_argument("-b", "--batch_size", type=int, default=500, help="Batch size. (Default: 500)")
     args = parser.parse_args()
-
+  
+    batch_size = args.batch_size
     variants = args.variant_file
     gtf = args.annotation_file
     try:
