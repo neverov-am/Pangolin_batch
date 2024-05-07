@@ -405,6 +405,7 @@ def main():
     batch_size = args.batch_size
     variants = args.variant_file
     gtf = args.annotation_file
+    d = args.distance
     try:
         gtf = gffutils.FeatureDB(gtf)
     except:
