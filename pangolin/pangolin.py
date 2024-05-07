@@ -60,6 +60,64 @@ def compute_score(ref_seq, alt_seq, strand, d, models):
     gain = pangolin[np.argmax(pangolin, axis=0), np.arange(pangolin.shape[1])]
     return loss, gain
 
+def compute_scores_on_batch(ref_seqs, alt_seqs, strands, d, models):
+
+    if len(ref_seqs) != len(alt_seqs) or len(alt_seqs) != len(strands) or len(strands) != len(ref_seqs):
+        raise ValueError(f'length of ref_seqs={len(ref_seqs)}, length of alt_seqs={len(alt_seqs)}, length of strands = {len(strands)}, but must be all equal')
+    batch_size = len(ref_seqs)
+    
+    encoded_refs = []
+    encoded_alts = []
+    
+    for i in range(len(ref_seqs)):
+        strand = strands[i]
+        ref_seq = torch.from_numpy(one_hot_encode(ref_seqs[i], strand).T).float()
+        alt_seq = torch.from_numpy(one_hot_encode(alt_seqs[i], strand).T).float()
+        encoded_refs.append(ref_seq)
+        encoded_alts.append(alt_seq)
+        
+    batch_ref = torch.stack(encoded_refs)
+    batch_alt = torch.stack(encoded_alts)
+    
+    if torch.cuda.is_available():
+        batch_ref = batch_ref.to(torch.device("cuda"))
+        batch_alt = batch_alt.to(torch.device("cuda"))
+
+    pangolin = []
+    for j in range(4):
+        score = []
+        for model in models[3*j:3*j+3]:
+            with torch.no_grad():
+                pred_ref = model(batch_ref)[:,[1,4,7,10][j],:].cpu().numpy() # [0][[1,4,7,10][j],:].cpu().numpy()
+                pred_alt = model(batch_alt)[:,[1,4,7,10][j],:].cpu().numpy() # [0][[1,4,7,10][j],:].cpu().numpy()
+                batch_score = []
+                for k in range(batch_size):
+                    ref = pred_ref[k]
+                    alt = pred_alt[k]
+                    if strands[k] == '-':
+                        ref = ref[::-1]
+                        alt = alt[::-1]
+                    l = 2*d+1
+                    ndiff = np.abs(len(ref)-len(alt))
+                    if len(ref)>len(alt):
+                        alt = np.concatenate([alt[0:l//2+1],np.zeros(ndiff),alt[l//2+1:]])
+                    elif len(ref)<len(alt):
+                        alt = np.concatenate([alt[0:l//2],np.max(alt[l//2:l//2+ndiff+1], keepdims=True),alt[l//2+ndiff+1:]])
+                    batch_score.append(alt-ref)
+                score.append(batch_score)
+        pangolin.append(score)
+    
+    pangolin = np.array(pangolin)
+    pangolin = np.mean(pangolin, axis=1)
+    loss_array = []
+    gain_array = []
+    for i in range(batch_size):
+        sample = pangolin[:,i,:]
+        loss = sample[np.argmin(sample, axis=0), np.arange(sample.shape[1])]
+        gain = sample[np.argmax(sample, axis=0), np.arange(sample.shape[1])]
+        loss_array.append(loss)
+        gain_array.append(gain)
+    return np.array(loss_array), np.array(gain_array)
 
 def get_genes(chr, pos, gtf):
     genes = gtf.region((chr, pos-1, pos-1), featuretype="gene")
@@ -192,6 +250,143 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
 
     return ','.join(scores_list)
 
+def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes_neg_array, gtf, models, args):
+    d = args.distance
+    cutoff = args.score_cutoff
+
+    batch_ref_seq = []
+    batch_alt_seq = []
+    batch_strand = []
+    batch_genes_pos = []
+    batch_genes_neg = []
+    batch_positions = []
+
+    for i in range(len(ref_seqs)):
+        genes_pos = genes_pos_array[i]
+        genes_neg = genes_neg_array[i]
+        
+        if len(genes_pos) > 0:
+            batch_ref_seq.append(ref_seqs[i])
+            batch_alt_seq.append(alt_seqs[i])
+            batch_strand.append('+')
+            batch_genes_pos.append(genes_pos)
+            batch_genes_neg.append(genes_neg)
+            batch_positions.append(positions[i])
+        if len(genes_neg) > 0:
+            batch_ref_seq.append(ref_seqs[i])
+            batch_alt_seq.append(alt_seqs[i])
+            batch_strand.append('-')
+            batch_genes_pos.append(genes_pos)
+            batch_genes_neg.append(genes_neg)
+            batch_positions.append(positions[i])
+
+    batch_loss, batch_gain = compute_scores_on_batch(batch_ref_seq, batch_alt_seq, batch_strand, d, models)
+    assert batch_loss.shape[0] == len(batch_ref_seq)
+    assert batch_gain.shape[0] == len(batch_ref_seq)
+
+    batch_scores = []
+    skip = False
+    for k in range(len(batch_ref_seq)):
+        if skip:
+            skip = False
+            continue
+
+        strand = batch_strand[k]
+        pos = batch_positions[k]
+        if strand == '+':
+            genes_pos = batch_genes_pos[k]
+            loss_pos = batch_loss[k]
+            gain_pos = batch_gain[k]
+            try:
+                both_strands = (batch_ref_seq[k] == batch_ref_seq[k+1])
+            except IndexError:
+                both_strands = False
+            if both_strands:
+                skip = True
+                genes_neg = batch_genes_neg[k+1]
+                loss_neg = batch_loss[k+1]
+                gain_neg = batch_gain[k+1]
+            else:
+                genes_neg = {}
+                loss_neg = None
+                gain_neg = None
+        else:
+            genes_neg = batch_genes_neg[k]
+            loss_neg = batch_loss[k]
+            gain_neg = batch_gain[k]
+            genes_pos = {}
+            loss_pos = None
+            gain_pos = None
+            # try:
+            #     assert batch_ref_seq[k] != batch_ref_seq[k+1]
+            # except IndexError:
+            #     pass
+        
+        scores_list = []
+        for (genes, loss, gain) in (
+            (genes_pos,loss_pos,gain_pos),(genes_neg,loss_neg,gain_neg)
+        ):
+            # Emit a bundle of scores/warnings per gene; join them all later
+            for gene, positions in genes.items():
+                per_gene_scores = []
+                warnings = "Warnings:"
+                positions = np.array(positions)
+                positions = positions - (pos - d)
+
+                if args.mask == "True" and len(positions) != 0:
+                    positions_filt = positions[(positions>=0) & (positions<len(loss))]
+                    # set splice gain at annotated sites to 0
+                    gain[positions_filt] = np.minimum(gain[positions_filt], 0)
+                    # set splice loss at unannotated sites to 0
+                    not_positions = ~np.isin(np.arange(len(loss)), positions_filt)
+                    loss[not_positions] = np.maximum(loss[not_positions], 0)
+
+                elif args.mask == "True":
+                    warnings += "NoAnnotatedSitesToMaskForThisGene"
+                    loss[:] = np.maximum(loss[:], 0)
+
+                if args.score_exons == "True":
+                    scores1 = [gene + '_sites1']
+                    scores2 = [gene + '_sites2']
+
+                    for i in range(len(positions)//2):
+                        p1, p2 = positions[2*i], positions[2*i+1]
+                        if p1<0 or p1>=len(loss):
+                            s1 = "NA"
+                        else:
+                            s1 = [loss[p1],gain[p1]]
+                            s1 = round(s1[np.argmax(np.abs(s1))],2)
+                        if p2<0 or p2>=len(loss):
+                            s2 = "NA"
+                        else:
+                            s2 = [loss[p2],gain[p2]]
+                            s2 = round(s2[np.argmax(np.abs(s2))],2)
+                        if s1 == "NA" and s2 == "NA":
+                            continue
+                        scores1.append(f"{p1-d}:{s1}")
+                        scores2.append(f"{p2-d}:{s2}")
+                    per_gene_scores += scores1 + scores2
+
+                elif cutoff != None:
+                    per_gene_scores.append(gene)
+                    l, g = np.where(loss<=-cutoff)[0], np.where(gain>=cutoff)[0]
+                    for p, s in zip(np.concatenate([g-d,l-d]), np.concatenate([gain[g],loss[l]])):
+                        per_gene_scores.append(f"{p}:{round(s,2)}")
+
+                else:
+                    per_gene_scores.append(gene)
+                    l, g = np.argmin(loss), np.argmax(gain),
+                    gain_str = f"{g-d}:{round(gain[g],2)}"
+                    loss_str = f"{l-d}:{round(loss[l],2)}"
+                    per_gene_scores += [gain_str, loss_str]
+
+                per_gene_scores.append(warnings)
+                scores_list.append('|'.join(per_gene_scores))
+
+        batch_scores.append(','.join(scores_list))
+
+    return batch_scores
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("variant_file", help="VCF or CSV file with a header (see COLUMN_IDS option).")
@@ -246,12 +441,79 @@ def main():
             "Format: gene|pos:score_change|pos:score_change|warnings,...",'.','.')
         fout = vcf.Writer(open(args.output_file+".vcf", 'w'), variants)
 
+        batch_positions = []
+        batch_refs = []
+        batch_alts = []
+        batch_genes_pos = []
+        batch_genes_neg = []
         for i, variant in enumerate(variants):
-            scores = process_variant(lnum+i, str(variant.CHROM), int(variant.POS), variant.REF, str(variant.ALT[0]), gtf, models, args)
-            if scores != -1:
-                variant.INFO["Pangolin"] = scores
-            fout.write_record(variant)
-            fout.flush()
+            chr = str(variant.CHROM)
+            pos = int(variant.POS)
+            ref = variant.REF
+            alt = str(variant.ALT[0])
+            
+            if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
+                    or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
+                print("[Line %s]" % lnum, "WARNING, skipping variant: Variant format not supported.")
+                continue
+            elif len(ref) > 2*d:
+                print("[Line %s]" % lnum, "WARNING, skipping variant: Deletion too large")
+                continue
+    
+            fasta = pyfastx.Fasta(args.reference_file)
+            # try to make vcf chromosomes compatible with reference chromosomes
+            if chr not in fasta.keys() and "chr"+chr in fasta.keys():
+                chr = "chr"+chr
+            elif chr not in fasta.keys() and chr[3:] in fasta.keys():
+                chr = chr[3:]
+    
+            try:
+                seq = fasta[chr][pos-5001-d:pos+len(ref)+4999+d].seq
+            except Exception as e:
+                print(e)
+                print("[Line %s]" % lnum, "WARNING, skipping variant: Could not get sequence, possibly because the variant is too close to chromosome ends. "
+                                          "See error message above.")
+                continue    
+    
+            if seq[5000+d:5000+d+len(ref)] != ref:
+                print("[Line %s]" % lnum, "WARNING, skipping variant: Mismatch between FASTA (ref base: %s) and variant file (ref base: %s)."
+                      % (seq[5000+d:5000+d+len(ref)], ref))
+                continue
+    
+            ref_seq = seq
+            alt_seq = seq[:5000+d] + alt + seq[5000+d+len(ref):]
+    
+            # get genes that intersect variant
+            genes_pos, genes_neg = get_genes(chr, pos, gtf)
+            if len(genes_pos)+len(genes_neg)==0:
+                print("[Line %s]" % lnum, "WARNING, skipping variant: Variant not contained in a gene body. Do GTF/FASTA chromosome names match?")
+                continue
+        
+            if len(batch_positions)<batch_size:
+                # batch_chroms.append(str(variant.CHROM))
+                batch_positions.append(pos)
+                batch_refs.append(ref_seq)
+                batch_alts.append(alt_seq)
+                batch_genes_pos.append(genes_pos)
+                batch_genes_neg.append(genes_neg)
+            else:
+                batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
+                for k in range(len(batch_scores)):
+                    variant.INFO["Pangolin"] = batch_scores[k]
+                    fout.write_record(variant)
+                    fout.flush()
+                batch_positions = [pos]
+                batch_refs = [ref_seq]
+                batch_alts = [alt_seq]
+                batch_genes_pos = [genes_pos]
+                batch_genes_neg = [genes_neg]
+                
+        if len(batch_positions)>0:
+            batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
+            for k in range(len(batch_scores)):
+                variant.INFO["Pangolin"] = batch_scores[k]
+                fout.write_record(variant)
+                fout.flush()
 
         fout.close()
 
