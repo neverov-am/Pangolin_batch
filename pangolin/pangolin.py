@@ -406,6 +406,8 @@ def main():
     variants = args.variant_file
     gtf = args.annotation_file
     d = args.distance
+    fasta = pyfastx.Fasta(args.reference_file)
+
     try:
         gtf = gffutils.FeatureDB(gtf)
     except:
@@ -463,7 +465,6 @@ def main():
                 print("[Line %s]" % lnum, "WARNING, skipping variant: Deletion too large")
                 continue
     
-            fasta = pyfastx.Fasta(args.reference_file)
             # try to make vcf chromosomes compatible with reference chromosomes
             if chr not in fasta.keys() and "chr"+chr in fasta.keys():
                 chr = "chr"+chr
