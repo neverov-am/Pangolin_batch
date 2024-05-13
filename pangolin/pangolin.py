@@ -461,9 +461,11 @@ def main():
             if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
                     or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
                 print("[Line %s]" % lnum, "WARNING, skipping variant: Variant format not supported.")
+                fout.write_record(variant)
                 continue
             elif len(ref) > 2*d:
                 print("[Line %s]" % lnum, "WARNING, skipping variant: Deletion too large")
+                fout.write_record(variant)
                 continue
     
             # try to make vcf chromosomes compatible with reference chromosomes
@@ -478,11 +480,13 @@ def main():
                 print(e)
                 print("[Line %s]" % lnum, "WARNING, skipping variant: Could not get sequence, possibly because the variant is too close to chromosome ends. "
                                           "See error message above.")
+                fout.write_record(variant)
                 continue    
     
             if seq[5000+d:5000+d+len(ref)] != ref:
                 print("[Line %s]" % lnum, "WARNING, skipping variant: Mismatch between FASTA (ref base: %s) and variant file (ref base: %s)."
                       % (seq[5000+d:5000+d+len(ref)], ref))
+                fout.write_record(variant)
                 continue
     
             ref_seq = seq
@@ -492,6 +496,7 @@ def main():
             genes_pos, genes_neg = get_genes(chr, pos, gtf)
             if len(genes_pos)+len(genes_neg)==0:
                 print("[Line %s]" % lnum, "WARNING, skipping variant: Variant not contained in a gene body. Do GTF/FASTA chromosome names match?")
+                fout.write_record(variant)
                 continue
         
             if len(batch_positions)<batch_size:
