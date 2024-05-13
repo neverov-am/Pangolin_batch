@@ -446,6 +446,7 @@ def main():
             "Format: gene|pos:score_change|pos:score_change|warnings,...",'.','.')
         fout = vcf.Writer(open(args.output_file+".vcf", 'w'), variants)
 
+        batch_variants = []
         batch_positions = []
         batch_refs = []
         batch_alts = []
@@ -494,7 +495,7 @@ def main():
                 continue
         
             if len(batch_positions)<batch_size:
-                # batch_chroms.append(str(variant.CHROM))
+                batch_variants.append(variant)
                 batch_positions.append(pos)
                 batch_refs.append(ref_seq)
                 batch_alts.append(alt_seq)
@@ -503,9 +504,11 @@ def main():
             else:
                 batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
                 for k in range(len(batch_scores)):
+                    variant = batch_variants[k]
                     variant.INFO["Pangolin"] = batch_scores[k]
                     fout.write_record(variant)
                     fout.flush()
+                batch_variants = [variant]
                 batch_positions = [pos]
                 batch_refs = [ref_seq]
                 batch_alts = [alt_seq]
@@ -515,6 +518,7 @@ def main():
         if len(batch_positions)>0:
             batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
             for k in range(len(batch_scores)):
+                variant = batch_variants[k]
                 variant.INFO["Pangolin"] = batch_scores[k]
                 fout.write_record(variant)
                 fout.flush()
