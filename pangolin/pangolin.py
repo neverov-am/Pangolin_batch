@@ -444,7 +444,7 @@ def main():
         variants.infos["Pangolin"] = vcf.parser._Info(
             "Pangolin",'.',"String","Pangolin splice scores. "
             "Format: gene|pos:score_change|pos:score_change|warnings,...",'.','.')
-        fout = vcf.Writer(open(args.output_file+".vcf", 'w'), variants)
+        fout = vcf.Writer(open(args.output_file, 'w'), variants)
 
         batch_variants = []
         batch_positions = []
