@@ -387,7 +387,7 @@ def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes
 
     return batch_scores
 
-def prepare_variant_for_batch(lnum, chr, pos, ref, alt, gtf, fasta):
+def prepare_variant_for_batch(lnum, chr, pos, ref, alt, gtf, fasta, d):
     if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
             or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
         print("[Line %s]" % lnum, "WARNING, skipping variant: Variant format not supported.")
@@ -498,7 +498,7 @@ def main():
             ref = variant.REF
             alt = str(variant.ALT[0])
             
-            ref_seq, alt_seq, genes_pos, genes_neg = prepare_variant_for_batch(lnum+i, chr, pos, ref, alt, gtf, fasta)
+            ref_seq, alt_seq, genes_pos, genes_neg = prepare_variant_for_batch(lnum+i, chr, pos, ref, alt, gtf, fasta, d)
 
             if ref_seq == -1:
                 fout.write_record(variant)
