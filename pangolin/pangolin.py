@@ -387,6 +387,46 @@ def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes
 
     return batch_scores
 
+def prepare_variant_for_batch(lnum, chr, pos, ref, alt, gtf, fasta):
+    if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
+            or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
+        print("[Line %s]" % lnum, "WARNING, skipping variant: Variant format not supported.")
+        return -1, -1, -1, -1
+    
+    elif len(ref) > 2*d:
+        print("[Line %s]" % lnum, "WARNING, skipping variant: Deletion too large")
+        return -1, -1, -1, -1
+    
+    # try to make vcf chromosomes compatible with reference chromosomes
+    if chr not in fasta.keys() and "chr"+chr in fasta.keys():
+        chr = "chr"+chr
+    elif chr not in fasta.keys() and chr[3:] in fasta.keys():
+        chr = chr[3:]
+    
+    try:
+        seq = fasta[chr][pos-5001-d:pos+len(ref)+4999+d].seq
+    except Exception as e:
+        print(e)
+        print("[Line %s]" % lnum, "WARNING, skipping variant: Could not get sequence, possibly because the variant is too close to chromosome ends. "
+                                          "See error message above.")
+        return -1, -1, -1, -1
+    
+    if seq[5000+d:5000+d+len(ref)] != ref:
+        print("[Line %s]" % lnum, "WARNING, skipping variant: Mismatch between FASTA (ref base: %s) and variant file (ref base: %s)."
+                % (seq[5000+d:5000+d+len(ref)], ref))
+        return -1, -1, -1, -1
+    
+    ref_seq = seq
+    alt_seq = seq[:5000+d] + alt + seq[5000+d+len(ref):]
+    
+    # get genes that intersect variant
+    genes_pos, genes_neg = get_genes(chr, pos, gtf)
+    if len(genes_pos)+len(genes_neg)==0:
+        print("[Line %s]" % lnum, "WARNING, skipping variant: Variant not contained in a gene body. Do GTF/FASTA chromosome names match?")
+        return -1, -1, -1, -1
+    
+    return ref_seq, alt_seq, genes_pos, genes_neg
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("variant_file", help="VCF or CSV file with a header (see COLUMN_IDS option).")
@@ -399,7 +439,7 @@ def main():
     parser.add_argument("-s", "--score_cutoff", type=float, help="Output all sites with absolute predicted change in score >= cutoff, instead of only the maximum loss/gain sites.")
     parser.add_argument("-d", "--distance", type=int, default=50, help="Number of bases on either side of the variant for which splice scores should be calculated. (Default: 50)")
     parser.add_argument("--score_exons", default="False", choices=["False","True"], help="Output changes in score for both splice sites of annotated exons, as long as one splice site is within the considered range (specified by -d). Output will be: gene|site1_pos:score|site2_pos:score|...")
-    parser.add_argument("-b", "--batch_size", type=int, default=500, help="Batch size. (Default: 500)")
+    parser.add_argument("-b", "--batch_size", type=int, default=3, help="Batch size. (Default: 3)")
     args = parser.parse_args()
   
     batch_size = args.batch_size
@@ -458,47 +498,12 @@ def main():
             ref = variant.REF
             alt = str(variant.ALT[0])
             
-            if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
-                    or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
-                print("[Line %s]" % lnum, "WARNING, skipping variant: Variant format not supported.")
+            ref_seq, alt_seq, genes_pos, genes_neg = prepare_variant_for_batch(lnum+i, chr, pos, ref, alt, gtf, fasta)
+
+            if ref_seq == -1:
                 fout.write_record(variant)
+                fout.flush()
                 continue
-            elif len(ref) > 2*d:
-                print("[Line %s]" % lnum, "WARNING, skipping variant: Deletion too large")
-                fout.write_record(variant)
-                continue
-    
-            # try to make vcf chromosomes compatible with reference chromosomes
-            if chr not in fasta.keys() and "chr"+chr in fasta.keys():
-                chr = "chr"+chr
-            elif chr not in fasta.keys() and chr[3:] in fasta.keys():
-                chr = chr[3:]
-    
-            try:
-                seq = fasta[chr][pos-5001-d:pos+len(ref)+4999+d].seq
-            except Exception as e:
-                print(e)
-                print("[Line %s]" % lnum, "WARNING, skipping variant: Could not get sequence, possibly because the variant is too close to chromosome ends. "
-                                          "See error message above.")
-                fout.write_record(variant)
-                continue    
-    
-            if seq[5000+d:5000+d+len(ref)] != ref:
-                print("[Line %s]" % lnum, "WARNING, skipping variant: Mismatch between FASTA (ref base: %s) and variant file (ref base: %s)."
-                      % (seq[5000+d:5000+d+len(ref)], ref))
-                fout.write_record(variant)
-                continue
-    
-            ref_seq = seq
-            alt_seq = seq[:5000+d] + alt + seq[5000+d+len(ref):]
-    
-            # get genes that intersect variant
-            genes_pos, genes_neg = get_genes(chr, pos, gtf)
-            if len(genes_pos)+len(genes_neg)==0:
-                print("[Line %s]" % lnum, "WARNING, skipping variant: Variant not contained in a gene body. Do GTF/FASTA chromosome names match?")
-                fout.write_record(variant)
-                continue
-        
             if len(batch_positions)<batch_size:
                 batch_variants.append(variant)
                 batch_positions.append(pos)
