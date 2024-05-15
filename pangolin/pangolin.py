@@ -250,10 +250,11 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
 
     return ','.join(scores_list)
 
-def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes_neg_array, gtf, models, args):
+def process_batch_variants(chroms, positions, ref_seqs, alt_seqs, genes_pos_array, genes_neg_array, gtf, models, args):
     d = args.distance
     cutoff = args.score_cutoff
 
+    batch_chroms = []
     batch_ref_seq = []
     batch_alt_seq = []
     batch_strand = []
@@ -266,6 +267,7 @@ def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes
         genes_neg = genes_neg_array[i]
         
         if len(genes_pos) > 0:
+            batch_chroms.append(chroms[i])
             batch_ref_seq.append(ref_seqs[i])
             batch_alt_seq.append(alt_seqs[i])
             batch_strand.append('+')
@@ -273,6 +275,7 @@ def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes
             batch_genes_neg.append(genes_neg)
             batch_positions.append(positions[i])
         if len(genes_neg) > 0:
+            batch_chroms.append(chroms[i])
             batch_ref_seq.append(ref_seqs[i])
             batch_alt_seq.append(alt_seqs[i])
             batch_strand.append('-')
@@ -298,7 +301,7 @@ def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes
             loss_pos = batch_loss[k]
             gain_pos = batch_gain[k]
             try:
-                both_strands = (batch_ref_seq[k] == batch_ref_seq[k+1])
+                both_strands = ((batch_chroms[k] == batch_chroms[k+1]) & (batch_positions[k] == batch_positions[k+1]) & (batch_ref_seq[k] == batch_ref_seq[k+1]) & (batch_alt_seq[k] == batch_alt_seq[k+1]))
             except IndexError:
                 both_strands = False
             if both_strands:
@@ -317,10 +320,6 @@ def process_batch_variants(positions, ref_seqs, alt_seqs, genes_pos_array, genes
             genes_pos = {}
             loss_pos = None
             gain_pos = None
-            # try:
-            #     assert batch_ref_seq[k] != batch_ref_seq[k+1]
-            # except IndexError:
-            #     pass
         
         scores_list = []
         for (genes, loss, gain) in (
@@ -487,6 +486,7 @@ def main():
         fout = vcf.Writer(open(args.output_file, 'w'), variants)
 
         batch_variants = []
+        batch_chroms = []
         batch_positions = []
         batch_refs = []
         batch_alts = []
@@ -504,26 +504,23 @@ def main():
                 fout.write_record(variant)
                 fout.flush()
                 continue
-            if len(batch_variants) < batch_size-1:
-                batch_variants.append(variant)
-                batch_positions.append(pos)
-                batch_refs.append(ref_seq)
-                batch_alts.append(alt_seq)
-                batch_genes_pos.append(genes_pos)
-                batch_genes_neg.append(genes_neg)
-            else:
-                batch_variants.append(variant)
-                batch_positions.append(pos)
-                batch_refs.append(ref_seq)
-                batch_alts.append(alt_seq)
-                batch_genes_pos.append(genes_pos)
-                batch_genes_neg.append(genes_neg)
-                batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
+
+            batch_chroms.append(chr)
+            batch_variants.append(variant)
+            batch_positions.append(pos)
+            batch_refs.append(ref_seq)
+            batch_alts.append(alt_seq)
+            batch_genes_pos.append(genes_pos)
+            batch_genes_neg.append(genes_neg)
+  
+            if len(batch_variants) >= batch_size:
+                batch_scores = process_batch_variants(batch_chroms, batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
                 for k in range(len(batch_scores)):
                     variant = batch_variants[k]
                     variant.INFO["Pangolin"] = batch_scores[k]
                     fout.write_record(variant)
                     fout.flush()
+                batch_chroms = []
                 batch_variants = []
                 batch_positions = []
                 batch_refs = []
@@ -532,7 +529,7 @@ def main():
                 batch_genes_neg = []
                 
         if len(batch_variants) > 0:
-            batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
+            batch_scores = process_batch_variants(batch_chroms, batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
             for k in range(len(batch_scores)):
                 variant = batch_variants[k]
                 variant.INFO["Pangolin"] = batch_scores[k]
