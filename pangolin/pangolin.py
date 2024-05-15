@@ -504,7 +504,7 @@ def main():
                 fout.write_record(variant)
                 fout.flush()
                 continue
-            if len(batch_positions)<batch_size:
+            if len(batch_variants) < batch_size-1:
                 batch_variants.append(variant)
                 batch_positions.append(pos)
                 batch_refs.append(ref_seq)
@@ -512,20 +512,26 @@ def main():
                 batch_genes_pos.append(genes_pos)
                 batch_genes_neg.append(genes_neg)
             else:
+                batch_variants.append(variant)
+                batch_positions.append(pos)
+                batch_refs.append(ref_seq)
+                batch_alts.append(alt_seq)
+                batch_genes_pos.append(genes_pos)
+                batch_genes_neg.append(genes_neg)
                 batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
                 for k in range(len(batch_scores)):
                     variant = batch_variants[k]
                     variant.INFO["Pangolin"] = batch_scores[k]
                     fout.write_record(variant)
                     fout.flush()
-                batch_variants = [variant]
-                batch_positions = [pos]
-                batch_refs = [ref_seq]
-                batch_alts = [alt_seq]
-                batch_genes_pos = [genes_pos]
-                batch_genes_neg = [genes_neg]
+                batch_variants = []
+                batch_positions = []
+                batch_refs = []
+                batch_alts = []
+                batch_genes_pos = []
+                batch_genes_neg = []
                 
-        if len(batch_positions)>0:
+        if len(batch_variants) > 0:
             batch_scores = process_batch_variants(batch_positions, batch_refs, batch_alts, batch_genes_pos, batch_genes_neg, gtf, models, args)
             for k in range(len(batch_scores)):
                 variant = batch_variants[k]
