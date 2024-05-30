@@ -5,6 +5,7 @@ import vcf
 import gffutils
 import pandas as pd
 import pyfastx
+import gzip
 # import time
 # startTime = time.time()
 
