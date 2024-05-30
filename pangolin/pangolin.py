@@ -471,13 +471,19 @@ def main():
             model.eval()
             models.append(model)
 
-    if variants.endswith(".vcf"):
+    if variants.endswith(".vcf") or variants.endswith(".vcf.gz"):
         lnum = 0
-        # count the number of header lines
-        for line in open(variants, 'r'):
-            lnum += 1
-            if line[0] != '#':
-                break
+        if variants.endswith(".vcf"):
+            for line in open(variants, 'r'):
+                lnum += 1
+                if line[0] != '#':
+                    break
+        if variants.endswith(".vcf.gz"):
+            with gzip.open(variants, 'rt') as f:
+                for line in f:
+                    lnum += 1
+                    if line[0] != '#':
+                        break
 
         variants = vcf.Reader(filename=variants)
         variants.infos["Pangolin"] = vcf.parser._Info(
