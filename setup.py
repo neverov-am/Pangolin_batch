@@ -21,7 +21,8 @@ setuptools.setup(
     },
     entry_points={
         "console_scripts": [
-            "pangolin=pangolin.pangolin:main"
+            "pangolin=pangolin.pangolin:main",
+            "pangolin_batch=pangolin.pangolin_batch:main"
         ]
     },
     scripts=glob(join(DIR, 'scripts/*.py')),
